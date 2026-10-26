@@ -10,6 +10,10 @@ Needs JDK 25 and Gradle 9+ (or run `gradle wrapper` once, then use `./gradlew`):
 Jar: `build/libs/betledger-1.0.0.jar` -> drop in `mods/` with Fabric API.
 
 ## Use
+- **Right Shift** (or `/betledger gui`) opens the dashboard window. Rebind it in Controls: "Open BetLedger window".
+  Pages: Sessions, Players (per-player rakeback), Tools (timer, hud layout, top gamblers, hud text), Look (accent colour, opacity), Settings.
+- Put your name and Discord in the footer: `/betledger set creator <name>` and `/betledger set discordUrl <invite link>`.
+- Auction (Tools > Auction): start a round; payments you receive while it is live count as bids, highest wins. Rebind the menu key in Settings.
 - `]` toggles the HUD (rebind in Controls: "Toggle BetLedger HUD")
 - `/betledger` stats, `start [name]`, `stop`, `reset`, `players`, `history`, `export` (CSV)
 - `/betledger rake <player> [percent]` show owed rakeback / set a per-player %

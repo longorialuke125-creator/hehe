@@ -32,7 +32,18 @@ import java.util.regex.Pattern;
 public class BetLedger implements ClientModInitializer {
     // ---- config (every public field is editable in-game with /betledger set <field> <value>) ----
     public static class Config {
-        public boolean hud = true;
+        public boolean hud = true, tracking = true;
+        public String accent = "E58CFF";      // RRGGBB
+        public int uiAlpha = 215;               // window opacity 60-255
+        public String creator = "YOUR NAME";     // shown in the window footer
+        public String discordUrl = "https://discord.gg/YOUR-INVITE";
+        public String hudLabel = "";
+        public int timerMinutes = 5;
+        public long timerEnd = 0;
+        public String auctionItem = "item", auctionLeader = "";
+        public int auctionSeconds = 60;
+        public double auctionMin = 0, auctionBid = 0;
+        public long auctionEnd = 0;
         public int hudX = 6, hudY = 6;
         public double hudScale = 1.0;
         public String hudColor = "FFFFFF";      // text colour, RRGGBB
@@ -53,7 +64,8 @@ public class BetLedger implements ClientModInitializer {
         public String name = "session";
         public long start = System.currentTimeMillis(), end = 0;
         public double sent, received;
-        public int bets;
+        public int bets, inCount, outCount;
+        public List<Double> curve = new ArrayList<>(); // cumulative net after each payment
         public Map<String, double[]> players = new HashMap<>(); // name -> {sent to them, received from them}
         double net() { return received - sent; }
     }
@@ -65,7 +77,8 @@ public class BetLedger implements ClientModInitializer {
     static Data data = new Data();
     static Path cfgFile, dataFile;
     static String pending; // /pay command waiting for yes/no
-    static boolean bypass;
+    static boolean bypass, openGui;
+    static KeyMapping guiKey;
 
     @Override public void onInitializeClient() {
         Path dir = FabricLoader.getInstance().getConfigDir();
@@ -91,7 +104,13 @@ public class BetLedger implements ClientModInitializer {
 
         KeyMapping key = KeyMappingHelper.registerKeyMapping(
             new KeyMapping("key.betledger.toggle", InputConstants.KEY_RBRACKET, KeyMapping.Category.MISC));
-        ClientTickEvents.END_CLIENT_TICK.register(c -> { while (key.consumeClick()) { cfg.hud = !cfg.hud; save(); } });
+        guiKey = KeyMappingHelper.registerKeyMapping(
+            new KeyMapping("key.betledger.gui", InputConstants.KEY_RSHIFT, KeyMapping.Category.MISC));
+        ClientTickEvents.END_CLIENT_TICK.register(c -> {
+            while (key.consumeClick()) { cfg.hud = !cfg.hud; save(); }
+            while (guiKey.consumeClick()) openGui = true;
+            if (openGui && c.screen == null) { openGui = false; c.setScreen(new Gui()); }
+        });
 
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT,
             Identifier.fromNamespaceAndPath("betledger", "hud"), (g, tick) -> {
@@ -140,12 +159,14 @@ public class BetLedger implements ClientModInitializer {
                     .then(ClientCommands.argument("value", StringArgumentType.greedyString()).executes(c -> set(
                         StringArgumentType.getString(c, "field"), StringArgumentType.getString(c, "value"))))));
             root.then(ClientCommands.literal("get").executes(c -> { for (Field f : Config.class.getFields()) try { say(f.getName() + " = " + f.get(cfg)); } catch (Exception ignored) {} return 1; }));
+            root.then(ClientCommands.literal("gui").executes(c -> { openGui = true; return 1; }));
             d.register(root);
         });
     }
 
     // ---- parsing ----
     static void parse(String text) {
+        if (!cfg.tracking) return;
         try {
             Matcher m = Pattern.compile(cfg.sentRegex).matcher(text);
             if (m.find()) { record(m.group(1), amt(m.group(2)), true); return; }
@@ -159,6 +180,10 @@ public class BetLedger implements ClientModInitializer {
         double[] p = s.players.computeIfAbsent(player, k -> new double[2]);
         if (sent) { s.sent += a; p[0] += a; } else { s.received += a; p[1] += a; }
         s.bets++;
+        if (!sent && cfg.auctionEnd > System.currentTimeMillis() && a >= cfg.auctionMin && a > cfg.auctionBid) { cfg.auctionBid = a; cfg.auctionLeader = player; } // payments received during a round are bids
+        if (sent) s.outCount++; else s.inCount++;
+        s.curve.add(s.net());
+        if (s.curve.size() > 400) s.curve.remove(0);
         save();
     }
 
@@ -186,6 +211,9 @@ public class BetLedger implements ClientModInitializer {
         l.add(s.name + "  " + (System.currentTimeMillis() - s.start) / 60000 + "m  " + s.bets + " bets");
         l.add("In " + fmt(s.received) + "  Out " + fmt(s.sent));
         l.add("Net " + (s.net() >= 0 ? "+" : "") + fmt(s.net()));
+        if (cfg.timerEnd > System.currentTimeMillis()) { long r = (cfg.timerEnd - System.currentTimeMillis()) / 1000; l.add(String.format("Timer %d:%02d", r / 60, r % 60)); }
+        if (!cfg.hudLabel.isEmpty()) l.add(cfg.hudLabel);
+        if (cfg.auctionEnd > System.currentTimeMillis()) l.add("Auction " + cfg.auctionItem + ": " + (cfg.auctionLeader.isEmpty() ? "no bids" : cfg.auctionLeader + " " + fmt(cfg.auctionBid)) + " " + (cfg.auctionEnd - System.currentTimeMillis()) / 1000 + "s");
         if (cfg.hudShowRakeback) l.add("Rakeback owed " + fmt(s.players.keySet().stream().mapToDouble(BetLedger::rake).sum()));
         l.addAll(playerLines(cfg.hudTopPlayers));
         return l;
